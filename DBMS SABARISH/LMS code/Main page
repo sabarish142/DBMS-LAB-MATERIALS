@@ -1,0 +1,242 @@
+# Importing all necessary modules
+import pymongo
+from tkinter import *
+import tkinter.ttk as ttk
+import tkinter.messagebox as mb
+import tkinter.simpledialog as sd
+
+# Connecting to MongoDB
+client = pymongo.MongoClient('mongodb://localhost:27017/')  # Change if MongoDB is hosted elsewhere
+db = client['libraryDB']
+collection = db['Library']
+
+# Functions
+def issuer_card():
+    Cid = sd.askstring('Issuer Card ID', 'What is the Issuer\'s Card ID?\t\t\t')
+
+    if not Cid:
+        mb.showerror('Error', 'Issuer ID cannot be empty, it must have a value')
+    else:
+        return Cid
+
+def display_records():
+    global collection, tree
+    tree.delete(*tree.get_children())
+    data = collection.find({})
+    for record in data:
+        tree.insert('', END, values=(record['BK_NAME'], record['BK_ID'], record['AUTHOR_NAME'],
+                                     record['BK_STATUS'], record['CARD_ID']))
+
+def clear_fields():
+    global bk_status, bk_id, bk_name, author_name, card_id
+
+    bk_status.set('Available')
+    for i in ['bk_id', 'bk_name', 'author_name', 'card_id']:
+        exec(f"{i}.set('')")
+        bk_id_entry.config(state='normal')
+    try:
+        tree.selection_remove(tree.selection()[0])
+    except:
+        pass
+
+def clear_and_display():
+    clear_fields()
+    display_records()
+
+def add_record():
+    global collection
+    global bk_name, bk_id, author_name, bk_status
+    if bk_status.get() == 'Issued':
+        card_id.set(issuer_card())
+    else:
+        card_id.set('N/A')
+    surety = mb.askyesno('Confirmation required', 'Are you sure?\nNote:Book ID cannot be changed later.')
+    if surety:
+        new_record = {
+            'BK_NAME': bk_name.get(),
+            'BK_ID': bk_id.get(),
+            'AUTHOR_NAME': author_name.get(),
+            'BK_STATUS': bk_status.get(),
+            'CARD_ID': card_id.get()
+        }
+        try:
+            collection.insert_one(new_record)
+            clear_and_display()
+        except pymongo.errors.DuplicateKeyError:
+            mb.showerror('Book already in use!',
+                         'The entered Book ID exists in the database, please alter the book ID')
+
+def view_record():
+    global bk_name, bk_id, bk_status, author_name, card_id
+    global tree
+
+    if not tree.focus():
+        mb.showerror('Select a row!',
+                     'To view a record, you must select it in the table. Please do so before continuing.')
+        return
+    current_item_selected = tree.focus()
+    values_in_selected_item = tree.item(current_item_selected)
+    selection = values_in_selected_item['values']
+    bk_name.set(selection[0]);
+    bk_id.set(selection[1]);
+    bk_status.set(selection[3])
+    author_name.set(selection[2])
+    try:
+        card_id.set(selection[4])
+    except:
+        card_id.set('')
+
+def update_record():
+    def update():
+        global bk_status, bk_name, bk_id, author_name, card_id
+        global collection, tree
+        if bk_status.get() == 'Issued':
+            card_id.set(issuer_card())
+        else:
+            card_id.set('N/A')
+        collection.update_one({'BK_ID': bk_id.get()}, {'$set': {
+            'BK_NAME': bk_name.get(),
+            'BK_STATUS': bk_status.get(),
+            'AUTHOR_NAME': author_name.get(),
+            'CARD_ID': card_id.get()
+        }})
+        clear_and_display()
+        edit.destroy()
+        bk_id_entry.config(state='normal')
+        clear.config(state='normal')
+    view_record()
+    bk_id_entry.config(state='disable')
+    clear.config(state='disable')
+    edit = Button(left_frame, text='Update Record', font=btn_font, bg=btn_hlb_bg, width=20, command=update)
+    edit.place(x=50, y=375)
+
+def remove_record():
+    if not tree.selection():
+        mb.showerror('Error!', 'Please select an item from the database')
+        return
+    current_item = tree.focus()
+    values = tree.item(current_item)
+    selection = values["values"]
+    collection.delete_one({'BK_ID': selection[1]})
+    tree.delete(current_item)
+    mb.showinfo('Done', 'The selected record deleted successfully')
+    clear_and_display()
+
+def delete_inventory():
+    if mb.askyesno('Confirmation required', 'Are you sure to delete all records?'):
+        tree.delete(*tree.get_children())
+        collection.delete_many({})
+    else:
+        return
+
+def change_availability():
+    global card_id, tree, collection
+
+    if not tree.selection():
+        mb.showerror('Error!', 'Please select a book from the database')
+        return
+    current_item = tree.focus()
+    values = tree.item(current_item)
+    BK_id = values['values'][1]
+    BK_status = values["values"][3]
+    if BK_status == 'Issued':
+        surety = mb.askyesno('Confirmation', 'Book returned?')
+        if surety:
+            collection.update_one({'BK_ID': BK_id}, {'$set': {'BK_STATUS': 'Available', 'CARD_ID': 'N/A'}})
+        else:
+            mb.showinfo('Alert!!', 'The book needs to be returned to change status')
+    else:
+        collection.update_one({'BK_ID': BK_id}, {'$set': {'BK_STATUS': 'Issued', 'CARD_ID': issuer_card()}})
+
+    clear_and_display()
+
+# Variables for the GUI
+lf_bg = '#6891FF'  # Left Frame Background Color
+rtf_bg = '#5D81E3'  # Right Top Frame Background Color
+rbf_bg = '#5E4FFF'  # Right Bottom Frame Background Color
+btn_hlb_bg = '#5E4FFF'  # Background color for Head Labels and Buttons
+
+lbl_font = ('Georgia', 16)  # Font for all labels
+entry_font = ('Times New Roman', 12)  # Font for all Entry widgets
+btn_font = ('Gill Sans MT', 13)
+
+# Initializing the main GUI window
+root = Tk()
+root.title('DBMS PROJECT')
+root.geometry('1100x600')
+root.resizable(0, 0)
+Label(root, text='LIBRARY MANAGEMENT SYSTEM', font=("Noto Sans CJK TC", 15, 'bold'), bg=btn_hlb_bg, fg='White').pack(
+    side=TOP, fill=X)
+
+# StringVars
+bk_status = StringVar()
+bk_name = StringVar()
+bk_id = StringVar()
+author_name = StringVar()
+card_id = StringVar()
+
+# Frames
+left_frame = Frame(root, bg=lf_bg)
+left_frame.place(x=0, y=30, relwidth=0.3, relheight=0.96)
+
+RT_frame = Frame(root, bg=rtf_bg)
+RT_frame.place(relx=0.3, y=30, relheight=0.2, relwidth=0.7)
+
+RB_frame = Frame(root)
+RB_frame.place(relx=0.3, rely=0.24, relheight=0.785, relwidth=0.7)
+
+# Left Frame
+Label(left_frame, text='Book Name', bg=lf_bg, font=lbl_font).place(x=92, y=25)
+Entry(left_frame, width=25, font=entry_font, text=bk_name).place(x=45, y=55)
+
+Label(left_frame, text='Book ID', bg=lf_bg, font=lbl_font).place(x=104, y=105)
+bk_id_entry = Entry(left_frame, width=25, font=entry_font, text=bk_id)
+bk_id_entry.place(x=45, y=135)
+
+Label(left_frame, text='Author Name', bg=lf_bg, font=lbl_font).place(x=88, y=185)
+Entry(left_frame, width=25, font=entry_font, text=author_name).place(x=45, y=215)
+
+Label(left_frame, text='Status of the Book', bg=lf_bg, font=lbl_font).place(x=64, y=265)
+dd = OptionMenu(left_frame, bk_status, *['Available', 'Issued'])
+dd.configure(font=entry_font, width=12)
+dd.place(x=75, y=300)
+
+submit = Button(left_frame, text='Add new record', font=btn_font, bg=btn_hlb_bg, width=20, command=add_record)
+submit.place(x=50, y=375)
+
+clear = Button(left_frame, text='Clear fields', font=btn_font, bg=btn_hlb_bg, width=20, command=clear_fields)
+clear.place(x=50, y=435)
+
+# Right Top Frame
+Button(RT_frame, text='Delete book', font=btn_font, bg=btn_hlb_bg, width=17, command=remove_record).place(x=25, y=30)
+Button(RT_frame, text='Delete all', font=btn_font, bg=btn_hlb_bg, width=17, command=delete_inventory).place(x=200, y=30)
+Button(RT_frame, text='Update details', font=btn_font, bg=btn_hlb_bg, width=17, command=update_record).place(x=375,y=30)
+Button(RT_frame, text="Change Availability", font=btn_font, bg=btn_hlb_bg, width=17, command=change_availability).place(x=550,y=30)
+# Right Bottom Frame (Treeview)
+Label(RB_frame, text='BOOK DATABASE', font=("Noto Sans CJK TC", 14, 'bold'), bg=rbf_bg, fg='Black').pack(side=TOP,fill=X)
+tree = ttk.Treeview(RB_frame, height=100, selectmode=BROWSE,columns=('Book Name', "Book ID", "Author", "Status", "Issuer's Card ID"))
+
+X_scroller = Scrollbar(tree, orient=HORIZONTAL, command=tree.xview)
+Y_scroller = Scrollbar(tree, orient=VERTICAL, command=tree.yview)
+X_scroller.pack(side=BOTTOM, fill=X)
+Y_scroller.pack(side=RIGHT, fill=Y)
+tree.config(yscrollcommand=Y_scroller.set, xscrollcommand=X_scroller.set)
+
+tree.heading('Book Name', text='Book Name', anchor=CENTER)
+tree.heading('Book ID', text='Book ID', anchor=CENTER)
+tree.heading('Author', text='Author', anchor=CENTER)
+tree.heading('Status', text='Status of the Book', anchor=CENTER)
+tree.heading("Issuer's Card ID", text="Card ID of the Issuer", anchor=CENTER)
+
+tree.column('#0', width=0, stretch=NO)
+tree.column('#1', width=200, stretch=NO)
+tree.column('#2', width=150, stretch=NO)
+tree.column('#3', width=125, stretch=NO)
+tree.column('#4', width=120, stretch=NO)
+tree.column('#5', width=180, stretch=NO)
+
+tree.place(y=30, relwidth=1, relheight=0.9, relx=0)
+display_records()
+
+root.update()
+root.mainloop()
